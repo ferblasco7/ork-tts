@@ -69,6 +69,15 @@ class TtsManager(
     fun skipForward() = jump(+1)
     fun skipBack() = jump(-1)
 
+    fun jumpToChapter(index: Int) {
+        val wasPlaying = wantsToPlay
+        tts?.stop()
+        chapterIndex = index.coerceIn(0, book.chapters.size - 1)
+        sentenceIndex = 0
+        onPositionChanged(chapterIndex, sentenceIndex)
+        if (wasPlaying && ready) speakCurrent(TextToSpeech.QUEUE_FLUSH)
+    }
+
     fun updateVoiceSettings(newSettings: VoiceSettings) {
         settings = newSettings
         applySettings()

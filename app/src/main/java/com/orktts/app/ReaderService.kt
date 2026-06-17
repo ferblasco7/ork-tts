@@ -6,6 +6,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.graphics.BitmapFactory
+import android.media.audiofx.Equalizer
 import android.net.Uri
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -30,15 +31,21 @@ class ReaderService : Service() {
         const val ACTION_PAUSE = "com.orktts.app.PAUSE"
         const val ACTION_SKIP_FORWARD = "com.orktts.app.SKIP_FORWARD"
         const val ACTION_SKIP_BACK = "com.orktts.app.SKIP_BACK"
+        const val ACTION_JUMP_CHAPTER = "com.orktts.app.JUMP_CHAPTER"
         const val EXTRA_URI = "uri"
+        const val EXTRA_CHAPTER = "chapter"
 
         private const val CHANNEL_ID = "ork_tts_playback"
         private const val NOTIF_ID = 1
+
+        /** 700Hz in milliHertz, the unit used by Android's Equalizer band ranges. */
+        private const val BASS_CUTOFF_MHZ = 700_000
     }
 
     private val scope = CoroutineScope(Dispatchers.Main + Job())
     private var ttsManager: TtsManager? = null
     private var bookUri: String? = null
+    private var equalizer: Equalizer? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -49,6 +56,7 @@ class ReaderService : Service() {
         scope.launch {
             VoiceSettingsStore.flow(this@ReaderService).collectLatest { settings ->
                 ttsManager?.updateVoiceSettings(settings)
+                applyEqualizer(settings.eqCutBass)
             }
         }
     }
@@ -60,13 +68,15 @@ class ReaderService : Service() {
             ACTION_PAUSE -> ttsManager?.pause()
             ACTION_SKIP_FORWARD -> ttsManager?.skipForward()
             ACTION_SKIP_BACK -> ttsManager?.skipBack()
+            ACTION_JUMP_CHAPTER -> ttsManager?.jumpToChapter(intent.getIntExtra(EXTRA_CHAPTER, 0))
         }
         return START_NOT_STICKY
     }
 
     private fun loadBook(uriString: String) {
         bookUri = uriString
-        ReaderState.state.value = ReaderState.state.value.copy(loading = true, error = null)
+        ttsManager?.pause()
+        ReaderState.state.value = ReaderState.state.value.copy(loading = true, error = null, book = null)
         startForeground(NOTIF_ID, buildNotification(null, false))
 
         scope.launch {
@@ -77,10 +87,10 @@ class ReaderService : Service() {
                 return@launch
             }
 
-            val saved = ReadingPosition.load(this@ReaderService)
-            val startChapter = if (saved?.bookUri == uriString) saved.chapterIndex else 0
-            val startSentence = if (saved?.bookUri == uriString) saved.sentenceIndex else 0
-            ReadingPosition.save(this@ReaderService, uriString, startChapter, startSentence)
+            val existing = LibraryStore.get(this@ReaderService, uriString)
+            val startChapter = existing?.chapterIndex ?: 0
+            val startSentence = existing?.sentenceIndex ?: 0
+            LibraryStore.upsert(this@ReaderService, uriString, book.title, book.coverBytes, startChapter, startSentence)
 
             val currentVoiceSettings = VoiceSettingsStore.flow(this@ReaderService).first()
 
@@ -96,7 +106,7 @@ class ReaderService : Service() {
                         chapterIndex = chapterIndex,
                         sentenceIndex = sentenceIndex
                     )
-                    scope.launch { ReadingPosition.save(this@ReaderService, uriString, chapterIndex, sentenceIndex) }
+                    scope.launch { LibraryStore.savePosition(this@ReaderService, uriString, chapterIndex, sentenceIndex) }
                     updateNotification(book)
                 },
                 onPlayingChanged = { isPlaying ->
@@ -121,6 +131,24 @@ class ReaderService : Service() {
             tempFile.outputStream().use { output -> input.copyTo(output) }
         }
         return EpubParser.parse(tempFile)
+    }
+
+    private fun applyEqualizer(enabled: Boolean) {
+        if (enabled) {
+            if (equalizer != null) return
+            equalizer = Equalizer(0, 0).apply {
+                setEnabled(true)
+                val minLevel = bandLevelRange[0]
+                for (band in 0 until numberOfBands) {
+                    if (getCenterFreq(band.toShort()) < BASS_CUTOFF_MHZ) {
+                        setBandLevel(band.toShort(), minLevel)
+                    }
+                }
+            }
+        } else {
+            equalizer?.release()
+            equalizer = null
+        }
     }
 
     private fun updateNotification(book: Book) {
@@ -161,6 +189,7 @@ class ReaderService : Service() {
 
     override fun onDestroy() {
         ttsManager?.release()
+        equalizer?.release()
         super.onDestroy()
     }
 }
