@@ -15,30 +15,41 @@ class TtsManager(
     private val book: Book,
     private var chapterIndex: Int,
     private var sentenceIndex: Int,
+    voiceSettings: VoiceSettings,
     private val onPositionChanged: (chapterIndex: Int, sentenceIndex: Int) -> Unit,
     private val onPlayingChanged: (isPlaying: Boolean) -> Unit
 ) {
     private var tts: TextToSpeech? = null
     private var ready = false
     private var wantsToPlay = false
+    private var settings = voiceSettings
 
     init {
         tts = TextToSpeech(context) { status ->
             ready = status == TextToSpeech.SUCCESS
             tts?.language = Locale.getDefault()
-            if (ready && wantsToPlay) speakCurrent()
+            applySettings()
+            if (ready && wantsToPlay) speakCurrent(TextToSpeech.QUEUE_FLUSH)
         }
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {}
             override fun onError(utteranceId: String?) {}
             override fun onDone(utteranceId: String?) {
                 if (!wantsToPlay) return
+                if (utteranceId == "pause") {
+                    speakCurrent(TextToSpeech.QUEUE_ADD)
+                    return
+                }
                 if (!advance()) {
                     wantsToPlay = false
                     onPlayingChanged(false)
                     return
                 }
-                speakCurrent()
+                if (settings.pauseMs > 0) {
+                    tts?.playSilentUtterance(settings.pauseMs.toLong(), TextToSpeech.QUEUE_ADD, "pause")
+                } else {
+                    speakCurrent(TextToSpeech.QUEUE_ADD)
+                }
             }
         })
     }
@@ -46,7 +57,7 @@ class TtsManager(
     fun play() {
         wantsToPlay = true
         onPlayingChanged(true)
-        if (ready) speakCurrent()
+        if (ready) speakCurrent(TextToSpeech.QUEUE_FLUSH)
     }
 
     fun pause() {
@@ -58,9 +69,19 @@ class TtsManager(
     fun skipForward() = jump(+1)
     fun skipBack() = jump(-1)
 
+    fun updateVoiceSettings(newSettings: VoiceSettings) {
+        settings = newSettings
+        applySettings()
+    }
+
     fun release() {
         tts?.stop()
         tts?.shutdown()
+    }
+
+    private fun applySettings() {
+        tts?.setPitch(settings.pitch)
+        tts?.setSpeechRate(settings.speed)
     }
 
     private fun jump(delta: Int) {
@@ -69,7 +90,7 @@ class TtsManager(
         sentenceIndex += delta
         clampPosition()
         onPositionChanged(chapterIndex, sentenceIndex)
-        if (wasPlaying && ready) speakCurrent()
+        if (wasPlaying && ready) speakCurrent(TextToSpeech.QUEUE_FLUSH)
     }
 
     private fun advance(): Boolean {
@@ -107,11 +128,8 @@ class TtsManager(
         }
     }
 
-    private fun speakCurrent() {
+    private fun speakCurrent(queueMode: Int) {
         val sentence = book.chapters.getOrNull(chapterIndex)?.sentences?.getOrNull(sentenceIndex) ?: return
-        tts?.speak(sentence, TextToSpeech.QUEUE_FLUSH, null, "s$chapterIndex-$sentenceIndex")
+        tts?.speak(sentence, queueMode, null, "s$chapterIndex-$sentenceIndex")
     }
-
-    fun currentChapterIndex() = chapterIndex
-    fun currentSentenceIndex() = sentenceIndex
 }

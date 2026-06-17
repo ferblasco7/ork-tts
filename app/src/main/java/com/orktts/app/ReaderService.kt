@@ -12,6 +12,8 @@ import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -44,6 +46,11 @@ class ReaderService : Service() {
         manager.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "Lectura en voz alta", NotificationManager.IMPORTANCE_LOW)
         )
+        scope.launch {
+            VoiceSettingsStore.flow(this@ReaderService).collectLatest { settings ->
+                ttsManager?.updateVoiceSettings(settings)
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -73,6 +80,9 @@ class ReaderService : Service() {
             val saved = ReadingPosition.load(this@ReaderService)
             val startChapter = if (saved?.bookUri == uriString) saved.chapterIndex else 0
             val startSentence = if (saved?.bookUri == uriString) saved.sentenceIndex else 0
+            ReadingPosition.save(this@ReaderService, uriString, startChapter, startSentence)
+
+            val currentVoiceSettings = VoiceSettingsStore.flow(this@ReaderService).first()
 
             ttsManager?.release()
             ttsManager = TtsManager(
@@ -80,6 +90,7 @@ class ReaderService : Service() {
                 book = book,
                 chapterIndex = startChapter,
                 sentenceIndex = startSentence,
+                voiceSettings = currentVoiceSettings,
                 onPositionChanged = { chapterIndex, sentenceIndex ->
                     ReaderState.state.value = ReaderState.state.value.copy(
                         chapterIndex = chapterIndex,

@@ -4,10 +4,34 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+
+    <!-- ear -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M44,30 L44,78 L54,78 L54,30 Z" />
+        android:fillColor="#8FBF7A"
+        android:pathData="M36,32 L26,14 L46,26 Z" />
+
+    <!-- head -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M54,46 L78,54 L54,62 Z" />
+        android:fillColor="#8FBF7A"
+        android:pathData="M54,24 C64.8,24 71,32.5 71,42 C71,49 67,55 60,58 L57,58 L60,52 L53,54 L48,58 L45,58 C39,55 37,49 37,42 C37,32.5 43.2,24 54,24 Z" />
+
+    <!-- tusk -->
+    <path
+        android:fillColor="#F2F2EC"
+        android:pathData="M58,54 L64,62 L55,57 Z" />
+
+    <!-- book left page -->
+    <path
+        android:fillColor="#F2F2EC"
+        android:pathData="M30,66 L53,60 L53,88 L30,82 Z" />
+
+    <!-- book right page -->
+    <path
+        android:fillColor="#F2F2EC"
+        android:pathData="M78,66 L55,60 L55,88 L78,82 Z" />
+
+    <!-- book spine shadow -->
+    <path
+        android:fillColor="#23301E"
+        android:pathData="M53,60 L55,60 L55,88 L53,88 Z" />
 </vector>
