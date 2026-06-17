@@ -7,6 +7,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
+import android.os.Bundle
 import android.view.View
 import android.widget.RemoteViews
 import kotlinx.coroutines.runBlocking
@@ -15,21 +16,39 @@ import kotlinx.coroutines.runBlocking
 class BookWidgetProvider : AppWidgetProvider() {
 
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {
-        val entries = runBlocking { LibraryStore.all(context) }.take(IMAGE_IDS.size)
-        for (id in ids) {
-            val views = RemoteViews(context.packageName, R.layout.widget_books)
-            IMAGE_IDS.forEachIndexed { index, viewId ->
-                val entry = entries.getOrNull(index)
-                if (entry?.coverPath != null) {
-                    views.setImageViewBitmap(viewId, BitmapFactory.decodeFile(entry.coverPath))
-                    views.setViewVisibility(viewId, View.VISIBLE)
-                    views.setOnClickPendingIntent(viewId, openBookIntent(context, entry.bookUri, viewId))
-                } else {
-                    views.setViewVisibility(viewId, View.GONE)
-                }
-            }
-            manager.updateAppWidget(id, views)
+        for (id in ids) updateWidget(context, manager, id)
+    }
+
+    override fun onAppWidgetOptionsChanged(
+        context: Context,
+        manager: AppWidgetManager,
+        id: Int,
+        newOptions: Bundle
+    ) {
+        updateWidget(context, manager, id)
+    }
+
+    private fun updateWidget(context: Context, manager: AppWidgetManager, id: Int) {
+        val options = manager.getAppWidgetOptions(id)
+        val widthDp = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0)
+        val visibleCount = when {
+            widthDp <= 0 -> IMAGE_IDS.size
+            else -> (widthDp / COVER_WIDTH_DP).coerceIn(1, IMAGE_IDS.size)
         }
+
+        val entries = runBlocking { LibraryStore.all(context) }.take(visibleCount)
+        val views = RemoteViews(context.packageName, R.layout.widget_books)
+        IMAGE_IDS.forEachIndexed { index, viewId ->
+            val entry = if (index < visibleCount) entries.getOrNull(index) else null
+            if (entry?.coverPath != null) {
+                views.setImageViewBitmap(viewId, BitmapFactory.decodeFile(entry.coverPath))
+                views.setViewVisibility(viewId, View.VISIBLE)
+                views.setOnClickPendingIntent(viewId, openBookIntent(context, entry.bookUri, viewId))
+            } else {
+                views.setViewVisibility(viewId, View.GONE)
+            }
+        }
+        manager.updateAppWidget(id, views)
     }
 
     private fun openBookIntent(context: Context, uri: String, requestCode: Int): PendingIntent {
@@ -45,6 +64,7 @@ class BookWidgetProvider : AppWidgetProvider() {
 
     companion object {
         private val IMAGE_IDS = listOf(R.id.imageBook1, R.id.imageBook2, R.id.imageBook3, R.id.imageBook4)
+        private const val COVER_WIDTH_DP = 60
 
         fun requestUpdate(context: Context) {
             val manager = AppWidgetManager.getInstance(context)

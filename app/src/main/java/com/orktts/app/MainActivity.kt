@@ -15,17 +15,19 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -40,13 +42,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
@@ -83,7 +88,8 @@ class MainActivity : ComponentActivity() {
                         onPause = { sendAction(ReaderService.ACTION_PAUSE) },
                         onSkipBack = { sendAction(ReaderService.ACTION_SKIP_BACK) },
                         onSkipForward = { sendAction(ReaderService.ACTION_SKIP_FORWARD) },
-                        onJumpChapter = { index -> sendChapterJump(index) }
+                        onJumpChapter = { index -> sendChapterJump(index) },
+                        onJumpSentence = { index -> sendSentenceJump(index) }
                     )
                 }
             }
@@ -107,6 +113,14 @@ class MainActivity : ComponentActivity() {
             Intent(this, ReaderService::class.java)
                 .setAction(ReaderService.ACTION_JUMP_CHAPTER)
                 .putExtra(ReaderService.EXTRA_CHAPTER, index)
+        )
+    }
+
+    private fun sendSentenceJump(index: Int) {
+        startForegroundService(
+            Intent(this, ReaderService::class.java)
+                .setAction(ReaderService.ACTION_JUMP_SENTENCE)
+                .putExtra(ReaderService.EXTRA_SENTENCE, index)
         )
     }
 }
@@ -140,12 +154,14 @@ fun ReaderScreen(
     onPause: () -> Unit,
     onSkipBack: () -> Unit,
     onSkipForward: () -> Unit,
-    onJumpChapter: (Int) -> Unit
+    onJumpChapter: (Int) -> Unit,
+    onJumpSentence: (Int) -> Unit
 ) {
     val state by ReaderState.state.collectAsState()
     var showSettings by remember { mutableStateOf(false) }
     var showLibrary by remember { mutableStateOf(true) }
     var showChapterMenu by remember { mutableStateOf(false) }
+    var showPageMenu by remember { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxSize()) {
         val coverBytes = state.book?.coverBytes
@@ -193,32 +209,40 @@ fun ReaderScreen(
                     val book = state.book!!
                     Text(book.title, style = MaterialTheme.typography.titleLarge)
 
-                    Box {
-                        Text(
-                            book.chapters.getOrNull(state.chapterIndex)?.title ?: "",
-                            style = MaterialTheme.typography.titleSmall,
-                            modifier = Modifier.clickable { showChapterMenu = true }
-                        )
-                        DropdownMenu(expanded = showChapterMenu, onDismissRequest = { showChapterMenu = false }) {
-                            book.chapters.forEachIndexed { index, chapter ->
-                                DropdownMenuItem(
-                                    text = { Text(chapter.title) },
-                                    onClick = {
-                                        showChapterMenu = false
-                                        onJumpChapter(index)
-                                    }
-                                )
-                            }
-                        }
+                    Button(onClick = { showChapterMenu = true }) {
+                        Text("Capítulo ${state.chapterIndex + 1} de ${book.chapters.size}: ${book.chapters.getOrNull(state.chapterIndex)?.title ?: ""}")
                     }
 
                     val chapter = book.chapters.getOrNull(state.chapterIndex)
                     val pages = remember(chapter) { buildPages(chapter?.sentences ?: emptyList()) }
-                    val currentPage = pages.find { state.sentenceIndex in it.sentenceRange } ?: pages.lastOrNull()
+                    val currentPageIndex = pages.indexOfFirst { state.sentenceIndex in it.sentenceRange }
+                        .let { if (it < 0) pages.lastIndex else it }
+                    val currentPage = pages.getOrNull(currentPageIndex)
                     Text(
                         currentPage?.text ?: "",
-                        style = MaterialTheme.typography.bodySmall
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState())
                     )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = { pages.getOrNull(currentPageIndex - 1)?.let { onJumpSentence(it.sentenceRange.first) } },
+                            enabled = currentPageIndex > 0
+                        ) { Text("◀ Página") }
+                        Button(onClick = { showPageMenu = true }, modifier = Modifier.weight(1f)) {
+                            Text("Página ${currentPageIndex + 1} de ${pages.size}")
+                        }
+                        Button(
+                            onClick = { pages.getOrNull(currentPageIndex + 1)?.let { onJumpSentence(it.sentenceRange.first) } },
+                            enabled = currentPageIndex < pages.lastIndex
+                        ) { Text("Página ▶") }
+                    }
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -232,6 +256,18 @@ fun ReaderScreen(
                         }
                         Button(onClick = onSkipForward) { Text("⏩") }
                     }
+
+                    if (showPageMenu) {
+                        PagePickerDialog(
+                            pages = pages,
+                            currentIndex = currentPageIndex,
+                            onSelect = { index ->
+                                showPageMenu = false
+                                pages.getOrNull(index)?.let { onJumpSentence(it.sentenceRange.first) }
+                            },
+                            onDismiss = { showPageMenu = false }
+                        )
+                    }
                 }
                 else -> Text("Ningún libro abierto")
             }
@@ -241,38 +277,201 @@ fun ReaderScreen(
     if (showSettings) {
         VoiceSettingsDialog(onDismiss = { showSettings = false })
     }
+
+    if (showChapterMenu && state.book != null) {
+        ChapterPickerDialog(
+            chapters = state.book!!.chapters,
+            currentIndex = state.chapterIndex,
+            onSelect = { index ->
+                showChapterMenu = false
+                onJumpChapter(index)
+            },
+            onDismiss = { showChapterMenu = false }
+        )
+    }
+}
+
+@Composable
+fun ChapterPickerDialog(
+    chapters: List<Chapter>,
+    currentIndex: Int,
+    onSelect: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Ir a capítulo") },
+        text = {
+            LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
+                items(chapters.size) { index ->
+                    Text(
+                        "Capítulo ${index + 1}: ${chapters[index].title}",
+                        style = if (index == currentIndex) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(index) }
+                            .padding(vertical = 12.dp)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Cerrar") }
+        }
+    )
+}
+
+@Composable
+private fun PagePickerDialog(
+    pages: List<Page>,
+    currentIndex: Int,
+    onSelect: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Ir a página") },
+        text = {
+            LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
+                items(pages.size) { index ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(index) }
+                            .padding(vertical = 10.dp)
+                    ) {
+                        Text(
+                            "Página ${index + 1}",
+                            style = if (index == currentIndex) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodyMedium
+                        )
+                        Text(
+                            pages[index].text.take(80),
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Cerrar") }
+        }
+    )
 }
 
 @Composable
 fun LibraryList(onOpenBook: (String) -> Unit) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val entries by LibraryStore.flow(context).collectAsState(initial = emptyList())
+    var pendingDelete by remember { mutableStateOf<LibraryEntry?>(null) }
 
     if (entries.isEmpty()) {
         Text("Ningún libro abierto todavía. Pulsa \"Abrir EPUB\" para añadir uno.")
         return
     }
 
-    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        items(entries) { entry ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onOpenBook(entry.bookUri) },
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                val cover = entry.coverPath?.let { BitmapFactory.decodeFile(it) }
-                if (cover != null) {
-                    Image(
-                        bitmap = cover.asImageBitmap(),
-                        contentDescription = null,
-                        modifier = Modifier.size(56.dp).clip(RoundedCornerShape(4.dp)),
-                        contentScale = ContentScale.Crop
+    val slots = entries.take(4)
+    val onDelete: (LibraryEntry) -> Unit = { pendingDelete = it }
+
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(modifier = Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            BookSlot(slots.getOrNull(0), onOpenBook, onDelete, Modifier.weight(1f).fillMaxHeight())
+            BookSlot(slots.getOrNull(1), onOpenBook, onDelete, Modifier.weight(1f).fillMaxHeight())
+        }
+        Row(modifier = Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            BookSlot(slots.getOrNull(2), onOpenBook, onDelete, Modifier.weight(1f).fillMaxHeight())
+            BookSlot(slots.getOrNull(3), onOpenBook, onDelete, Modifier.weight(1f).fillMaxHeight())
+        }
+    }
+
+    val entryToDelete = pendingDelete
+    if (entryToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("Eliminar libro") },
+            text = { Text("¿Quitar \"${entryToDelete.title}\" de la biblioteca? El archivo EPUB original no se borra.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingDelete = null
+                    scope.launch { LibraryStore.remove(context, entryToDelete.bookUri) }
+                }) { Text("Eliminar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) { Text("Cancelar") }
+            }
+        )
+    }
+}
+
+@Composable
+private fun BookSlot(
+    entry: LibraryEntry?,
+    onOpenBook: (String) -> Unit,
+    onDelete: (LibraryEntry) -> Unit,
+    modifier: Modifier
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFF1B1B1B))
+            .then(if (entry != null) Modifier.clickable { onOpenBook(entry.bookUri) } else Modifier)
+    ) {
+        if (entry == null) return@Box
+
+        val cover = entry.coverPath?.let { BitmapFactory.decodeFile(it) }
+        if (cover != null) {
+            Image(
+                bitmap = cover.asImageBitmap(),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+        }
+
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(4.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color.Black.copy(alpha = 0.55f))
+                .clickable { onDelete(entry) }
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+        ) {
+            Text("✕", color = Color.White, style = MaterialTheme.typography.bodySmall)
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.BottomCenter)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f))
                     )
-                }
-                Column {
-                    Text(entry.title, style = MaterialTheme.typography.titleSmall)
-                    Text("Capítulo ${entry.chapterIndex + 1}", style = MaterialTheme.typography.bodySmall)
+                )
+                .padding(horizontal = 10.dp, vertical = 8.dp)
+        ) {
+            Column {
+                Text(
+                    entry.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = Color.White,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (!entry.author.isNullOrBlank()) {
+                    Text(
+                        entry.author,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.8f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
         }
@@ -326,7 +525,7 @@ fun VoiceSettingsDialog(onDismiss: () -> Unit) {
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("Quitar graves (<700Hz, para cascos)")
+                    Text("Quitar graves (≤900Hz, para cascos)")
                     Switch(
                         checked = eqCutBass,
                         onCheckedChange = {

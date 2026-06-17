@@ -1,17 +1,27 @@
 package com.orktts.app
 
 import android.content.Context
+import android.media.MediaPlayer
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import java.io.File
 import java.util.Locale
+import kotlin.math.PI
 
 /**
- * Reads a [Book] sentence by sentence using the system TTS engine.
+ * Reads a [Book] sentence by sentence: synthesizes each sentence to a WAV file and plays it with
+ * a [MediaPlayer]. The bass-cut option filters the PCM samples directly in software (a cascaded
+ * one-pole high-pass) instead of relying on the device's hardware Equalizer effect, since several
+ * OEM audio chips (MIUI included) apply that effect as a sticky global DSP that ignores per-app
+ * enable/disable — filtering the samples ourselves always works, on every device.
  * "Skip 10s" has no real meaning for synthesized speech (there's no audio timeline),
  * so forward/back simply move one sentence — instant and trivial to implement.
  */
 class TtsManager(
-    context: Context,
+    private val context: Context,
     private val book: Book,
     private var chapterIndex: Int,
     private var sentenceIndex: Int,
@@ -23,33 +33,23 @@ class TtsManager(
     private var ready = false
     private var wantsToPlay = false
     private var settings = voiceSettings
+    private val handler = Handler(Looper.getMainLooper())
+    private val sentenceFile = File(context.cacheDir, "tts_sentence.wav")
+    private val filteredFile = File(context.cacheDir, "tts_sentence_filtered.wav")
+    private var mediaPlayer: MediaPlayer? = null
 
     init {
         tts = TextToSpeech(context) { status ->
             ready = status == TextToSpeech.SUCCESS
             tts?.language = Locale.getDefault()
             applySettings()
-            if (ready && wantsToPlay) speakCurrent(TextToSpeech.QUEUE_FLUSH)
+            if (ready && wantsToPlay) speakCurrent()
         }
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {}
             override fun onError(utteranceId: String?) {}
             override fun onDone(utteranceId: String?) {
-                if (!wantsToPlay) return
-                if (utteranceId == "pause") {
-                    speakCurrent(TextToSpeech.QUEUE_ADD)
-                    return
-                }
-                if (!advance()) {
-                    wantsToPlay = false
-                    onPlayingChanged(false)
-                    return
-                }
-                if (settings.pauseMs > 0) {
-                    tts?.playSilentUtterance(settings.pauseMs.toLong(), TextToSpeech.QUEUE_ADD, "pause")
-                } else {
-                    speakCurrent(TextToSpeech.QUEUE_ADD)
-                }
+                handler.post { if (wantsToPlay) playSynthesizedSentence() }
             }
         })
     }
@@ -57,25 +57,44 @@ class TtsManager(
     fun play() {
         wantsToPlay = true
         onPlayingChanged(true)
-        if (ready) speakCurrent(TextToSpeech.QUEUE_FLUSH)
+        if (ready) speakCurrent()
     }
 
     fun pause() {
         wantsToPlay = false
-        tts?.stop()
+        stopPlayer()
         onPlayingChanged(false)
     }
 
     fun skipForward() = jump(+1)
     fun skipBack() = jump(-1)
 
+    /** Jumps straight to a sentence in the current chapter (used for page navigation) without
+     * synthesizing every sentence in between — a single synthesis call at the destination. */
+    fun jumpToSentence(index: Int) {
+        val wasPlaying = wantsToPlay
+        wantsToPlay = false
+        stopPlayer()
+        val chapterSize = book.chapters.getOrNull(chapterIndex)?.sentences?.size ?: 1
+        sentenceIndex = index.coerceIn(0, chapterSize - 1)
+        onPositionChanged(chapterIndex, sentenceIndex)
+        if (wasPlaying) {
+            wantsToPlay = true
+            if (ready) speakCurrent()
+        }
+    }
+
     fun jumpToChapter(index: Int) {
         val wasPlaying = wantsToPlay
-        tts?.stop()
+        wantsToPlay = false
+        stopPlayer()
         chapterIndex = index.coerceIn(0, book.chapters.size - 1)
         sentenceIndex = 0
         onPositionChanged(chapterIndex, sentenceIndex)
-        if (wasPlaying && ready) speakCurrent(TextToSpeech.QUEUE_FLUSH)
+        if (wasPlaying) {
+            wantsToPlay = true
+            if (ready) speakCurrent()
+        }
     }
 
     fun updateVoiceSettings(newSettings: VoiceSettings) {
@@ -84,6 +103,8 @@ class TtsManager(
     }
 
     fun release() {
+        wantsToPlay = false
+        stopPlayer()
         tts?.stop()
         tts?.shutdown()
     }
@@ -95,11 +116,15 @@ class TtsManager(
 
     private fun jump(delta: Int) {
         val wasPlaying = wantsToPlay
-        tts?.stop()
+        wantsToPlay = false
+        stopPlayer()
         sentenceIndex += delta
         clampPosition()
         onPositionChanged(chapterIndex, sentenceIndex)
-        if (wasPlaying && ready) speakCurrent(TextToSpeech.QUEUE_FLUSH)
+        if (wasPlaying) {
+            wantsToPlay = true
+            if (ready) speakCurrent()
+        }
     }
 
     private fun advance(): Boolean {
@@ -137,8 +162,147 @@ class TtsManager(
         }
     }
 
-    private fun speakCurrent(queueMode: Int) {
+    private fun speakCurrent() {
         val sentence = book.chapters.getOrNull(chapterIndex)?.sentences?.getOrNull(sentenceIndex) ?: return
-        tts?.speak(sentence, queueMode, null, "s$chapterIndex-$sentenceIndex")
+        tts?.synthesizeToFile(sentence, Bundle(), sentenceFile, "s$chapterIndex-$sentenceIndex")
+    }
+
+    private fun playSynthesizedSentence() {
+        if (!wantsToPlay) return
+        if (!sentenceFile.exists()) {
+            onSentenceFinished()
+            return
+        }
+        stopPlayer()
+        val playable = if (settings.eqCutBass) {
+            try {
+                applyBassCutFilter(sentenceFile, filteredFile, BASS_CUTOFF_HZ)
+                filteredFile
+            } catch (e: Exception) {
+                sentenceFile
+            }
+        } else {
+            sentenceFile
+        }
+        try {
+            mediaPlayer = MediaPlayer().apply {
+                setDataSource(playable.absolutePath)
+                setOnCompletionListener { onSentenceFinished() }
+                prepare()
+                start()
+            }
+        } catch (e: Exception) {
+            onSentenceFinished()
+        }
+    }
+
+    private fun onSentenceFinished() {
+        if (!wantsToPlay) return
+        if (!advance()) {
+            wantsToPlay = false
+            onPlayingChanged(false)
+            return
+        }
+        if (settings.pauseMs > 0) {
+            handler.postDelayed({ if (wantsToPlay) speakCurrent() }, settings.pauseMs.toLong())
+        } else {
+            speakCurrent()
+        }
+    }
+
+    private fun stopPlayer() {
+        mediaPlayer?.let {
+            try {
+                if (it.isPlaying) it.stop()
+            } catch (e: Exception) {
+                // ignore
+            }
+            it.release()
+        }
+        mediaPlayer = null
+    }
+
+    companion object {
+        private const val BASS_CUTOFF_HZ = 900f
+
+        /** Cascaded one-pole high-pass filter applied directly to 16-bit PCM samples in a WAV file. */
+        private fun applyBassCutFilter(input: File, output: File, cutoffHz: Float) {
+            val bytes = input.readBytes()
+            if (bytes.size < 44 || String(bytes, 0, 4, Charsets.US_ASCII) != "RIFF") {
+                input.copyTo(output, overwrite = true)
+                return
+            }
+
+            var pos = 12
+            var channels = 1
+            var sampleRate = 22050
+            var bitsPerSample = 16
+            var dataOffset = -1
+            var dataSize = -1
+            while (pos + 8 <= bytes.size) {
+                val chunkId = String(bytes, pos, 4, Charsets.US_ASCII)
+                val chunkSize = readLE32(bytes, pos + 4)
+                val chunkDataStart = pos + 8
+                when (chunkId) {
+                    "fmt " -> {
+                        channels = readLE16(bytes, chunkDataStart + 2)
+                        sampleRate = readLE32(bytes, chunkDataStart + 4)
+                        bitsPerSample = readLE16(bytes, chunkDataStart + 14)
+                    }
+                    "data" -> {
+                        dataOffset = chunkDataStart
+                        dataSize = chunkSize.coerceAtMost(bytes.size - chunkDataStart)
+                    }
+                }
+                if (dataOffset >= 0) break
+                pos = chunkDataStart + chunkSize + (chunkSize % 2)
+            }
+
+            if (dataOffset < 0 || bitsPerSample != 16) {
+                input.copyTo(output, overwrite = true)
+                return
+            }
+
+            val result = bytes.copyOf()
+            val rc = 1.0 / (2 * PI * cutoffHz)
+            val dt = 1.0 / sampleRate
+            val alpha = rc / (rc + dt)
+            val bytesPerFrame = 2 * channels
+            val frameCount = dataSize / bytesPerFrame
+
+            for (ch in 0 until channels) {
+                var prevXa = 0.0
+                var prevYa = 0.0
+                var prevXb = 0.0
+                var prevYb = 0.0
+                for (i in 0 until frameCount) {
+                    val byteIndex = dataOffset + i * bytesPerFrame + ch * 2
+                    val sample = ((bytes[byteIndex + 1].toInt() shl 8) or (bytes[byteIndex].toInt() and 0xFF)).toShort().toDouble()
+
+                    val ya = alpha * (prevYa + sample - prevXa)
+                    prevXa = sample
+                    prevYa = ya
+
+                    val yb = alpha * (prevYb + ya - prevXb)
+                    prevXb = ya
+                    prevYb = yb
+
+                    val outSample = yb.toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+                    result[byteIndex] = (outSample and 0xFF).toByte()
+                    result[byteIndex + 1] = ((outSample shr 8) and 0xFF).toByte()
+                }
+            }
+
+            output.writeBytes(result)
+        }
+
+        private fun readLE16(bytes: ByteArray, offset: Int): Int =
+            (bytes[offset].toInt() and 0xFF) or ((bytes[offset + 1].toInt() and 0xFF) shl 8)
+
+        private fun readLE32(bytes: ByteArray, offset: Int): Int =
+            (bytes[offset].toInt() and 0xFF) or
+                ((bytes[offset + 1].toInt() and 0xFF) shl 8) or
+                ((bytes[offset + 2].toInt() and 0xFF) shl 16) or
+                ((bytes[offset + 3].toInt() and 0xFF) shl 24)
     }
 }

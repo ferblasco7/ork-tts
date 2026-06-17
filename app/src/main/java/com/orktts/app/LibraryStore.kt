@@ -16,6 +16,7 @@ private val Context.libraryDataStore by preferencesDataStore(name = "library")
 data class LibraryEntry(
     val bookUri: String,
     val title: String,
+    val author: String?,
     val coverPath: String?,
     val chapterIndex: Int,
     val sentenceIndex: Int,
@@ -38,32 +39,44 @@ object LibraryStore {
         context: Context,
         bookUri: String,
         title: String,
+        author: String?,
         coverBytes: ByteArray?,
         chapterIndex: Int,
         sentenceIndex: Int
     ) {
         val existing = get(context, bookUri)
         val coverPath = coverBytes?.let { saveCover(context, bookUri, it) } ?: existing?.coverPath
-        write(context, bookUri, title, coverPath, chapterIndex, sentenceIndex)
+        write(context, bookUri, title, author, coverPath, chapterIndex, sentenceIndex)
         BookWidgetProvider.requestUpdate(context)
     }
 
     suspend fun savePosition(context: Context, bookUri: String, chapterIndex: Int, sentenceIndex: Int) {
         val existing = get(context, bookUri) ?: return
-        write(context, bookUri, existing.title, existing.coverPath, chapterIndex, sentenceIndex)
+        write(context, bookUri, existing.title, existing.author, existing.coverPath, chapterIndex, sentenceIndex)
+    }
+
+    suspend fun remove(context: Context, bookUri: String) {
+        val existing = get(context, bookUri) ?: return
+        existing.coverPath?.let { File(it).delete() }
+        context.libraryDataStore.edit { prefs ->
+            val list = parse(prefs[KEY_BOOKS]).filterNot { it.bookUri == bookUri }
+            prefs[KEY_BOOKS] = serialize(list)
+        }
+        BookWidgetProvider.requestUpdate(context)
     }
 
     private suspend fun write(
         context: Context,
         bookUri: String,
         title: String,
+        author: String?,
         coverPath: String?,
         chapterIndex: Int,
         sentenceIndex: Int
     ) {
         context.libraryDataStore.edit { prefs ->
             val list = parse(prefs[KEY_BOOKS]).filterNot { it.bookUri == bookUri }.toMutableList()
-            list.add(LibraryEntry(bookUri, title, coverPath, chapterIndex, sentenceIndex, System.currentTimeMillis()))
+            list.add(LibraryEntry(bookUri, title, author, coverPath, chapterIndex, sentenceIndex, System.currentTimeMillis()))
             prefs[KEY_BOOKS] = serialize(list)
         }
     }
@@ -83,6 +96,7 @@ object LibraryStore {
             LibraryEntry(
                 bookUri = o.getString("uri"),
                 title = o.getString("title"),
+                author = o.optString("author").ifEmpty { null },
                 coverPath = o.optString("cover").ifEmpty { null },
                 chapterIndex = o.getInt("chapter"),
                 sentenceIndex = o.getInt("sentence"),
@@ -97,6 +111,7 @@ object LibraryStore {
             val o = JSONObject()
             o.put("uri", e.bookUri)
             o.put("title", e.title)
+            o.put("author", e.author ?: "")
             o.put("cover", e.coverPath ?: "")
             o.put("chapter", e.chapterIndex)
             o.put("sentence", e.sentenceIndex)

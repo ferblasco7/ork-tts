@@ -5,33 +5,80 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- ear -->
+    <!-- left ear, big and notched -->
     <path
-        android:fillColor="#8FBF7A"
-        android:pathData="M36,32 L26,14 L46,26 Z" />
-
-    <!-- head -->
+        android:fillColor="#5C7A3E"
+        android:pathData="M32,30 L16,12 L36,26 Z" />
     <path
-        android:fillColor="#8FBF7A"
-        android:pathData="M54,24 C64.8,24 71,32.5 71,42 C71,49 67,55 60,58 L57,58 L60,52 L53,54 L48,58 L45,58 C39,55 37,49 37,42 C37,32.5 43.2,24 54,24 Z" />
+        android:fillColor="#23301E"
+        android:pathData="M24,18 L29,22 L25,25 Z" />
 
-    <!-- tusk -->
+    <!-- right ear, smaller and torn -->
+    <path
+        android:fillColor="#5C7A3E"
+        android:pathData="M76,28 L90,16 L74,33 Z" />
+    <path
+        android:fillColor="#23301E"
+        android:pathData="M82,21 L86,24 L81,26 Z" />
+
+    <!-- head, wide craggy jaw -->
+    <path
+        android:fillColor="#5C7A3E"
+        android:pathData="M38,18 L70,18 L77,33 L73,53 L60,65 L48,65 L35,53 L31,33 Z" />
+
+    <!-- cheek shading -->
+    <path
+        android:fillColor="#46612E"
+        android:pathData="M31,33 L38,33 L35,53 L48,65 L42,65 L33,52 Z" />
+
+    <!-- old scar across the eye -->
+    <path
+        android:fillColor="#C9B79C"
+        android:pathData="M37,29 L41,29 L52,53 L48,53 Z" />
+
+    <!-- heavy brow ridge -->
+    <path
+        android:fillColor="#324322"
+        android:pathData="M34,39 L76,39 L72,46 L38,46 Z" />
+
+    <!-- angry eyes -->
+    <path
+        android:fillColor="#B23A2E"
+        android:pathData="M41,42 L48,42 L47,47 L42,47 Z" />
+    <path
+        android:fillColor="#B23A2E"
+        android:pathData="M62,42 L69,42 L68,47 L63,47 Z" />
+
+    <!-- flat wide nose -->
+    <path
+        android:fillColor="#324322"
+        android:pathData="M50,48 L60,48 L57,57 L53,57 Z" />
+
+    <!-- jagged mouth with teeth -->
+    <path
+        android:fillColor="#1A1410"
+        android:pathData="M40,58 L70,58 L66,63 L62,59 L58,63 L54,59 L50,63 L46,59 L42,63 Z" />
+
+    <!-- tusks -->
     <path
         android:fillColor="#F2F2EC"
-        android:pathData="M58,54 L64,62 L55,57 Z" />
+        android:pathData="M43,61 L38,50 L48,59 Z" />
+    <path
+        android:fillColor="#F2F2EC"
+        android:pathData="M67,61 L72,50 L62,59 Z" />
 
     <!-- book left page -->
     <path
         android:fillColor="#F2F2EC"
-        android:pathData="M30,66 L53,60 L53,88 L30,82 Z" />
+        android:pathData="M28,70 L53,64 L53,92 L28,86 Z" />
 
     <!-- book right page -->
     <path
         android:fillColor="#F2F2EC"
-        android:pathData="M78,66 L55,60 L55,88 L78,82 Z" />
+        android:pathData="M80,70 L55,64 L55,92 L80,86 Z" />
 
     <!-- book spine shadow -->
     <path
         android:fillColor="#23301E"
-        android:pathData="M53,60 L55,60 L55,88 L53,88 Z" />
+        android:pathData="M53,64 L55,64 L55,92 L53,92 Z" />
 </vector>
