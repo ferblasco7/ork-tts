@@ -34,9 +34,13 @@ class TtsManager(
     private var wantsToPlay = false
     private var settings = voiceSettings
     private val handler = Handler(Looper.getMainLooper())
-    private val sentenceFile = File(context.cacheDir, "tts_sentence.wav")
-    private val filteredFile = File(context.cacheDir, "tts_sentence_filtered.wav")
+    private val sentenceFile = File(context.cacheDir, "tts_current.wav")
+    private val nextFile = File(context.cacheDir, "tts_next.wav")
+    private val filteredFile = File(context.cacheDir, "tts_current_filtered.wav")
+    private val filteredNextFile = File(context.cacheDir, "tts_next_filtered.wav")
     private var mediaPlayer: MediaPlayer? = null
+    private var nextReady = false
+    private var synthesisingNext = false
 
     init {
         tts = TextToSpeech(context) { status ->
@@ -49,7 +53,15 @@ class TtsManager(
             override fun onStart(utteranceId: String?) {}
             override fun onError(utteranceId: String?) {}
             override fun onDone(utteranceId: String?) {
-                handler.post { if (wantsToPlay) playSynthesizedSentence() }
+                handler.post {
+                    when (utteranceId) {
+                        "current" -> if (wantsToPlay) playSynthesizedSentence()
+                        "next" -> {
+                            nextReady = true
+                            synthesisingNext = false
+                        }
+                    }
+                }
             }
         })
     }
@@ -165,7 +177,25 @@ class TtsManager(
     private fun speakCurrent() {
         val sentence = book.chapters.getOrNull(chapterIndex)?.sentences?.getOrNull(sentenceIndex) ?: return
         val textToSpeak = if (settings.ignorePunctuation) cleanPunctuation(sentence) else sentence
-        tts?.synthesizeToFile(textToSpeak, Bundle(), sentenceFile, "utter")
+        nextReady = false
+        synthesisingNext = false
+        tts?.synthesizeToFile(textToSpeak, Bundle(), sentenceFile, "current")
+    }
+
+    private fun synthesizeNext() {
+        if (synthesisingNext || nextReady) return
+        var nextChap = chapterIndex
+        var nextSent = sentenceIndex + 1
+        if (nextSent >= (book.chapters.getOrNull(nextChap)?.sentences?.size ?: 0)) {
+            nextChap++
+            nextSent = 0
+        }
+        if (nextChap >= book.chapters.size) return
+
+        val nextSentence = book.chapters[nextChap].sentences[nextSent]
+        val textToSpeak = if (settings.ignorePunctuation) cleanPunctuation(nextSentence) else nextSentence
+        synthesisingNext = true
+        tts?.synthesizeToFile(textToSpeak, Bundle(), nextFile, "next")
     }
 
     private fun cleanPunctuation(text: String): String =
@@ -197,6 +227,7 @@ class TtsManager(
                 prepare()
                 start()
             }
+            synthesizeNext()
         } catch (e: Exception) {
             onSentenceFinished()
         }
@@ -209,7 +240,40 @@ class TtsManager(
             onPlayingChanged(false)
             return
         }
-        speakCurrent()
+        if (nextReady && nextFile.exists()) {
+            nextReady = false
+            playNextFile()
+        } else {
+            speakCurrent()
+        }
+    }
+
+    private fun playNextFile() {
+        if (!wantsToPlay) return
+        stopPlayer()
+        sentenceFile.delete()
+        nextFile.renameTo(sentenceFile)
+        val playable = if (settings.eqCutBass) {
+            try {
+                applyBassCutFilter(sentenceFile, filteredFile, BASS_CUTOFF_HZ)
+                filteredFile
+            } catch (e: Exception) {
+                sentenceFile
+            }
+        } else {
+            sentenceFile
+        }
+        try {
+            mediaPlayer = MediaPlayer().apply {
+                setDataSource(playable.absolutePath)
+                setOnCompletionListener { onSentenceFinished() }
+                prepare()
+                start()
+            }
+            synthesizeNext()
+        } catch (e: Exception) {
+            onSentenceFinished()
+        }
     }
 
     private fun stopPlayer() {
