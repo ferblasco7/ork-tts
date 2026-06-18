@@ -35,8 +35,12 @@ class TtsManager(
     private var settings = voiceSettings
     private val handler = Handler(Looper.getMainLooper())
     private val sentenceFile = File(context.cacheDir, "tts_sentence.wav")
+    private val nextSentenceFile = File(context.cacheDir, "tts_next_sentence.wav")
     private val filteredFile = File(context.cacheDir, "tts_sentence_filtered.wav")
+    private val filteredNextFile = File(context.cacheDir, "tts_next_sentence_filtered.wav")
     private var mediaPlayer: MediaPlayer? = null
+    private var nextSynthesisChapter = -1
+    private var nextSynthesisSentence = -1
 
     init {
         tts = TextToSpeech(context) { status ->
@@ -49,7 +53,12 @@ class TtsManager(
             override fun onStart(utteranceId: String?) {}
             override fun onError(utteranceId: String?) {}
             override fun onDone(utteranceId: String?) {
-                handler.post { if (wantsToPlay) playSynthesizedSentence() }
+                handler.post {
+                    if (!wantsToPlay) return@post
+                    val id = utteranceId?.substring(1)?.toIntOrNull() ?: return@post
+                    if (id == 0) playSynthesizedSentence()
+                    else if (id == 1) playNextAndSynthesizeFollowing()
+                }
             }
         })
     }
@@ -75,6 +84,8 @@ class TtsManager(
         val wasPlaying = wantsToPlay
         wantsToPlay = false
         stopPlayer()
+        nextSynthesisChapter = -1
+        nextSynthesisSentence = -1
         val chapterSize = book.chapters.getOrNull(chapterIndex)?.sentences?.size ?: 1
         sentenceIndex = index.coerceIn(0, chapterSize - 1)
         onPositionChanged(chapterIndex, sentenceIndex)
@@ -88,6 +99,8 @@ class TtsManager(
         val wasPlaying = wantsToPlay
         wantsToPlay = false
         stopPlayer()
+        nextSynthesisChapter = -1
+        nextSynthesisSentence = -1
         chapterIndex = index.coerceIn(0, book.chapters.size - 1)
         sentenceIndex = 0
         onPositionChanged(chapterIndex, sentenceIndex)
@@ -118,6 +131,8 @@ class TtsManager(
         val wasPlaying = wantsToPlay
         wantsToPlay = false
         stopPlayer()
+        nextSynthesisChapter = -1
+        nextSynthesisSentence = -1
         sentenceIndex += delta
         clampPosition()
         onPositionChanged(chapterIndex, sentenceIndex)
@@ -165,7 +180,27 @@ class TtsManager(
     private fun speakCurrent() {
         val sentence = book.chapters.getOrNull(chapterIndex)?.sentences?.getOrNull(sentenceIndex) ?: return
         val textToSpeak = if (settings.ignorePunctuation) cleanPunctuation(sentence) else sentence
-        tts?.synthesizeToFile(textToSpeak, Bundle(), sentenceFile, "s$chapterIndex-$sentenceIndex")
+        tts?.synthesizeToFile(textToSpeak, Bundle(), sentenceFile, "0")
+        preSynthesizeNext()
+    }
+
+    private fun preSynthesizeNext() {
+        var nextChapter = chapterIndex
+        var nextSentence = sentenceIndex + 1
+        if (nextSentence >= (book.chapters.getOrNull(nextChapter)?.sentences?.size ?: 0)) {
+            nextChapter++
+            nextSentence = 0
+        }
+        if (nextChapter >= book.chapters.size) {
+            nextSynthesisChapter = -1
+            nextSynthesisSentence = -1
+            return
+        }
+        nextSynthesisChapter = nextChapter
+        nextSynthesisSentence = nextSentence
+        val nextSentenceText = book.chapters[nextChapter].sentences[nextSentence]
+        val textToSpeak = if (settings.ignorePunctuation) cleanPunctuation(nextSentenceText) else nextSentenceText
+        tts?.synthesizeToFile(textToSpeak, Bundle(), nextSentenceFile, "1")
     }
 
     private fun cleanPunctuation(text: String): String =
@@ -202,6 +237,40 @@ class TtsManager(
         }
     }
 
+    private fun playNextAndSynthesizeFollowing() {
+        if (!wantsToPlay) return
+        if (nextSynthesisChapter < 0 || !nextSentenceFile.exists()) {
+            onSentenceFinished()
+            return
+        }
+        stopPlayer()
+        chapterIndex = nextSynthesisChapter
+        sentenceIndex = nextSynthesisSentence
+        onPositionChanged(chapterIndex, sentenceIndex)
+
+        val playable = if (settings.eqCutBass) {
+            try {
+                applyBassCutFilter(nextSentenceFile, filteredNextFile, BASS_CUTOFF_HZ)
+                filteredNextFile
+            } catch (e: Exception) {
+                nextSentenceFile
+            }
+        } else {
+            nextSentenceFile
+        }
+        try {
+            mediaPlayer = MediaPlayer().apply {
+                setDataSource(playable.absolutePath)
+                setOnCompletionListener { onSentenceFinished() }
+                prepare()
+                start()
+            }
+        } catch (e: Exception) {
+            onSentenceFinished()
+        }
+        preSynthesizeNext()
+    }
+
     private fun onSentenceFinished() {
         if (!wantsToPlay) return
         if (!advance()) {
@@ -209,11 +278,7 @@ class TtsManager(
             onPlayingChanged(false)
             return
         }
-        if (settings.pauseMs > 0) {
-            handler.postDelayed({ if (wantsToPlay) speakCurrent() }, settings.pauseMs.toLong())
-        } else {
-            speakCurrent()
-        }
+        speakCurrent()
     }
 
     private fun stopPlayer() {
