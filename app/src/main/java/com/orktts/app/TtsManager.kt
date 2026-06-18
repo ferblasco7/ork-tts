@@ -55,9 +55,10 @@ class TtsManager(
             override fun onDone(utteranceId: String?) {
                 handler.post {
                     if (!wantsToPlay) return@post
-                    val id = utteranceId?.substring(1)?.toIntOrNull() ?: return@post
-                    if (id == 0) playSynthesizedSentence()
-                    else if (id == 1) playNextAndSynthesizeFollowing()
+                    when (utteranceId) {
+                        "0" -> playSynthesizedSentence()
+                        "1" -> playNextAndSynthesizeFollowing()
+                    }
                 }
             }
         })
