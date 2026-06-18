@@ -228,33 +228,85 @@ fun ReaderScreen(
                     )
 
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Button(
-                            onClick = { pages.getOrNull(currentPageIndex - 1)?.let { onJumpSentence(it.sentenceRange.first) } },
-                            enabled = currentPageIndex > 0
-                        ) { Text("◀ Página") }
-                        Button(onClick = { showPageMenu = true }, modifier = Modifier.weight(1f)) {
-                            Text("Página ${currentPageIndex + 1} de ${pages.size}")
+                        Box(
+                            modifier = Modifier
+                                .weight(0.4f)
+                                .heightIn(min = 56.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF404040))
+                                .clickable(enabled = currentPageIndex > 0) { pages.getOrNull(currentPageIndex - 1)?.let { onJumpSentence(it.sentenceRange.first) } }
+                                .alpha(if (currentPageIndex > 0) 1f else 0.4f),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("◀", style = MaterialTheme.typography.displaySmall, color = Color.White)
                         }
-                        Button(
-                            onClick = { pages.getOrNull(currentPageIndex + 1)?.let { onJumpSentence(it.sentenceRange.first) } },
-                            enabled = currentPageIndex < pages.lastIndex
-                        ) { Text("Página ▶") }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 56.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF505050))
+                                .clickable { showPageMenu = true },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("Página ${currentPageIndex + 1}/${pages.size}", style = MaterialTheme.typography.bodyMedium, color = Color.White)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .weight(0.4f)
+                                .heightIn(min = 56.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF404040))
+                                .clickable(enabled = currentPageIndex < pages.lastIndex) { pages.getOrNull(currentPageIndex + 1)?.let { onJumpSentence(it.sentenceRange.first) } }
+                                .alpha(if (currentPageIndex < pages.lastIndex) 1f else 0.4f),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("▶", style = MaterialTheme.typography.displaySmall, color = Color.White)
+                        }
                     }
 
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Button(onClick = onSkipBack) { Text("⏪") }
-                        if (state.isPlaying) {
-                            Button(onClick = onPause) { Text("Pausa") }
-                        } else {
-                            Button(onClick = onPlay) { Text("Reproducir") }
+                        Box(
+                            modifier = Modifier
+                                .weight(0.35f)
+                                .heightIn(min = 80.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFF303030))
+                                .clickable { onSkipBack() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("⏪", style = MaterialTheme.typography.displayMedium, color = Color.White)
                         }
-                        Button(onClick = onSkipForward) { Text("⏩") }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 80.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (state.isPlaying) Color(0xFF1F7F1F) else Color(0xFF7F1F1F))
+                                .clickable { if (state.isPlaying) onPause() else onPlay() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(if (state.isPlaying) "⏸" else "▶", style = MaterialTheme.typography.displayLarge, color = Color.White)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .weight(0.35f)
+                                .heightIn(min = 80.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFF303030))
+                                .clickable { onSkipForward() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("⏩", style = MaterialTheme.typography.displayMedium, color = Color.White)
+                        }
                     }
 
                     if (showPageMenu) {
@@ -488,10 +540,11 @@ fun VoiceSettingsDialog(onDismiss: () -> Unit) {
     var speed by remember(settings) { mutableStateOf(settings.speed) }
     var pauseMs by remember(settings) { mutableStateOf(settings.pauseMs.toFloat()) }
     var eqCutBass by remember(settings) { mutableStateOf(settings.eqCutBass) }
+    var ignorePunctuation by remember(settings) { mutableStateOf(settings.ignorePunctuation) }
 
     fun persist() {
         scope.launch {
-            VoiceSettingsStore.save(context, VoiceSettings(pitch, speed, pauseMs.toInt(), eqCutBass))
+            VoiceSettingsStore.save(context, VoiceSettings(pitch, speed, pauseMs.toInt(), eqCutBass, ignorePunctuation))
         }
     }
 
@@ -521,6 +574,19 @@ fun VoiceSettingsDialog(onDismiss: () -> Unit) {
                     onValueChangeFinished = { persist() },
                     valueRange = 0f..1000f
                 )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("Ignorar puntuación (. ! ? ¡ ¿)")
+                    Switch(
+                        checked = ignorePunctuation,
+                        onCheckedChange = {
+                            ignorePunctuation = it
+                            persist()
+                        }
+                    )
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)

@@ -164,8 +164,14 @@ class TtsManager(
 
     private fun speakCurrent() {
         val sentence = book.chapters.getOrNull(chapterIndex)?.sentences?.getOrNull(sentenceIndex) ?: return
-        tts?.synthesizeToFile(sentence, Bundle(), sentenceFile, "s$chapterIndex-$sentenceIndex")
+        val textToSpeak = if (settings.ignorePunctuation) cleanPunctuation(sentence) else sentence
+        tts?.synthesizeToFile(textToSpeak, Bundle(), sentenceFile, "s$chapterIndex-$sentenceIndex")
     }
+
+    private fun cleanPunctuation(text: String): String =
+        text.replace(Regex("[.!?¡¿]+"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
 
     private fun playSynthesizedSentence() {
         if (!wantsToPlay) return
