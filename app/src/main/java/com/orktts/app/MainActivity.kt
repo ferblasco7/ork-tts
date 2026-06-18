@@ -368,7 +368,7 @@ fun ChapterPickerDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Cerrar") }
+            TextButton(onClick = onDismiss) { Text("Cerrar", color = Color.Cyan) }
         }
     )
 }
@@ -407,7 +407,7 @@ private fun PagePickerDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Cerrar") }
+            TextButton(onClick = onDismiss) { Text("Cerrar", color = Color.Cyan) }
         }
     )
 }
@@ -451,10 +451,10 @@ fun LibraryList(onOpenBook: (String) -> Unit) {
                 TextButton(onClick = {
                     pendingDelete = null
                     scope.launch { LibraryStore.remove(context, entryToDelete.bookUri) }
-                }) { Text("Eliminar") }
+                }) { Text("Eliminar", color = Color(0xFFFF6B6B)) }
             },
             dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text("Cancelar") }
+                TextButton(onClick = { pendingDelete = null }) { Text("Cancelar", color = Color.Cyan) }
             }
         )
     }
@@ -603,7 +603,7 @@ fun VoiceSettingsDialog(onDismiss: () -> Unit) {
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Cerrar") }
+            TextButton(onClick = onDismiss) { Text("Cerrar", color = Color.Cyan) }
         }
     )
 }
