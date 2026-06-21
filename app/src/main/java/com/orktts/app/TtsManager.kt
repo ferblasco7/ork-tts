@@ -236,10 +236,51 @@ class TtsManager(
                 setDataSource(playable.absolutePath)
                 setOnCompletionListener { onSentenceFinished() }
                 prepare()
+                val durationMs = duration
                 start()
+                if (nextFile.exists() && durationMs > 100) {
+                    handler.postDelayed({ playNextOverlap() }, (durationMs - 50).toLong())
+                }
             }
         } catch (e: Exception) {
             onSentenceFinished()
+        }
+    }
+
+    private fun playNextOverlap() {
+        if (!wantsToPlay || !nextFile.exists() || mediaPlayer == null) return
+        try {
+            val playable = if (settings.eqCutBass) {
+                try {
+                    applyBassCutFilter(nextFile, filteredNextFile, BASS_CUTOFF_HZ)
+                    filteredNextFile
+                } catch (e: Exception) {
+                    nextFile
+                }
+            } else {
+                nextFile
+            }
+            val nextPlayer = MediaPlayer().apply {
+                setDataSource(playable.absolutePath)
+                setOnCompletionListener { onSentenceFinished() }
+                prepare()
+                start()
+            }
+            handler.postDelayed({
+                mediaPlayer?.stop()
+                mediaPlayer?.release()
+                mediaPlayer = nextPlayer
+                sentenceFile.delete()
+                nextFile.renameTo(sentenceFile)
+                if (!advance()) {
+                    wantsToPlay = false
+                    onPlayingChanged(false)
+                    return@postDelayed
+                }
+                enqueueTwoAhead()
+            }, 50)
+        } catch (e: Exception) {
+            // ignore
         }
     }
 
