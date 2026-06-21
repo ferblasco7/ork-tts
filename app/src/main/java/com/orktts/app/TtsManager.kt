@@ -40,8 +40,10 @@ class TtsManager(
     private val filteredFile = File(context.cacheDir, "tts_current_filtered.wav")
     private val filteredNextFile = File(context.cacheDir, "tts_next_filtered.wav")
     private var mediaPlayer: MediaPlayer? = null
+    private var nextMediaPlayer: MediaPlayer? = null
     private var currentlySynthesising = false
     private val synthQueue = LinkedBlockingQueue<SynthesisJob>()
+    private var nextReady = false
 
     private data class SynthesisJob(val chapterIdx: Int, val sentenceIdx: Int, val text: String, val file: File, val utteranceId: String)
 
@@ -177,10 +179,11 @@ class TtsManager(
 
     private fun speakCurrent() {
         synthQueue.clear()
-        val chunk = buildChunk(4)
+        nextReady = false
+        val chunk = buildChunk(15)
         if (chunk.isEmpty()) return
         enqueueSynthesis(chapterIndex, sentenceIndex, chunk, sentenceFile, "current")
-        enqueueTwoAhead()
+        synthesizeNextChunk()
         processQueue()
     }
 
@@ -188,6 +191,48 @@ class TtsManager(
         val sentences = mutableListOf<String>()
         var tempChap = chapterIndex
         var tempSent = sentenceIndex
+        repeat(size) {
+            val sent = book.chapters.getOrNull(tempChap)?.sentences?.getOrNull(tempSent)
+            if (sent != null) {
+                val processed = if (settings.ignorePunctuation) cleanPunctuation(sent) else sent
+                sentences.add(processed)
+                tempSent++
+                if (tempSent >= (book.chapters.getOrNull(tempChap)?.sentences?.size ?: 0)) {
+                    tempChap++
+                    tempSent = 0
+                }
+            }
+        }
+        return sentences.joinToString(" ")
+    }
+
+    private fun synthesizeNextChunk() {
+        var nextChap = chapterIndex
+        var nextSent = sentenceIndex
+        repeat(15) {
+            nextSent++
+            if (nextSent >= (book.chapters.getOrNull(nextChap)?.sentences?.size ?: 0)) {
+                nextChap++
+                nextSent = 0
+            }
+        }
+        if (nextChap >= book.chapters.size) {
+            nextReady = false
+            return
+        }
+        val nextChunk = buildChunkFrom(nextChap, nextSent, 15)
+        if (nextChunk.isEmpty()) {
+            nextReady = false
+            return
+        }
+        nextReady = true
+        enqueueSynthesis(nextChap, nextSent, nextChunk, nextFile, "next")
+    }
+
+    private fun buildChunkFrom(startChap: Int, startSent: Int, size: Int): String {
+        val sentences = mutableListOf<String>()
+        var tempChap = startChap
+        var tempSent = startSent
         repeat(size) {
             val sent = book.chapters.getOrNull(tempChap)?.sentences?.getOrNull(tempSent)
             if (sent != null) {
@@ -253,72 +298,41 @@ class TtsManager(
         try {
             mediaPlayer = MediaPlayer().apply {
                 setDataSource(playable.absolutePath)
-                setOnCompletionListener { onSentenceFinished() }
+                setOnCompletionListener { onChunkFinished() }
                 prepare()
-                val durationMs = duration
                 start()
-                if (nextFile.exists() && durationMs > 200) {
-                    handler.postDelayed({ playNextOverlap() }, (durationMs - 100).toLong())
-                }
             }
+            processQueue()
         } catch (e: Exception) {
             onSentenceFinished()
         }
     }
 
-    private fun playNextOverlap() {
-        if (!wantsToPlay || !nextFile.exists() || mediaPlayer == null) return
-        try {
-            val playable = if (settings.eqCutBass) {
-                try {
-                    applyBassCutFilter(nextFile, filteredNextFile, BASS_CUTOFF_HZ)
-                    filteredNextFile
-                } catch (e: Exception) {
-                    nextFile
-                }
-            } else {
-                nextFile
-            }
-            val nextPlayer = MediaPlayer().apply {
-                setDataSource(playable.absolutePath)
-                setOnCompletionListener { onSentenceFinished() }
-                prepare()
-                start()
-            }
-            handler.postDelayed({
-                mediaPlayer?.stop()
-                mediaPlayer?.release()
-                mediaPlayer = nextPlayer
-                sentenceFile.delete()
-                nextFile.renameTo(sentenceFile)
-                if (!advance()) {
-                    wantsToPlay = false
-                    onPlayingChanged(false)
-                    return@postDelayed
-                }
-                enqueueTwoAhead()
-            }, 100)
-        } catch (e: Exception) {
-            // ignore
+    private fun onChunkFinished() {
+        if (!wantsToPlay) return
+        repeat(14) { advance() }
+        if (nextReady && nextFile.exists()) {
+            sentenceFile.delete()
+            nextFile.renameTo(sentenceFile)
+            mediaPlayer?.stop()
+            mediaPlayer?.release()
+            mediaPlayer = null
+            synthesizeNextChunk()
+            playSynthesizedSentence()
+        } else if (!advance()) {
+            wantsToPlay = false
+            onPlayingChanged(false)
+        } else {
+            speakCurrent()
         }
     }
 
     private fun onSentenceFinished() {
         if (!wantsToPlay) return
-        repeat(3) {
-            if (!advance()) {
-                wantsToPlay = false
-                onPlayingChanged(false)
-                return@onSentenceFinished
-            }
-        }
-        if (nextFile.exists()) {
-            sentenceFile.delete()
-            nextFile.renameTo(sentenceFile)
-            enqueueTwoAhead()
-            playSynthesizedSentence()
-        } else {
-            speakCurrent()
+        if (!advance()) {
+            wantsToPlay = false
+            onPlayingChanged(false)
+            return
         }
     }
 
