@@ -238,8 +238,8 @@ class TtsManager(
                 prepare()
                 val durationMs = duration
                 start()
-                if (nextFile.exists() && durationMs > 400) {
-                    handler.postDelayed({ playNextOverlap() }, (durationMs - 400).toLong())
+                if (nextFile.exists() && durationMs > 1000) {
+                    handler.postDelayed({ playNextOverlap() }, (durationMs - 1000).toLong())
                 }
             }
         } catch (e: Exception) {
@@ -278,7 +278,7 @@ class TtsManager(
                     return@postDelayed
                 }
                 enqueueTwoAhead()
-            }, 400)
+            }, 1000)
         } catch (e: Exception) {
             // ignore
         }
