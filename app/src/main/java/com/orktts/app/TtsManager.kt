@@ -176,12 +176,31 @@ class TtsManager(
     }
 
     private fun speakCurrent() {
-        val sentence = book.chapters.getOrNull(chapterIndex)?.sentences?.getOrNull(sentenceIndex) ?: return
-        val textToSpeak = if (settings.ignorePunctuation) cleanPunctuation(sentence) else sentence
         synthQueue.clear()
-        enqueueSynthesis(chapterIndex, sentenceIndex, textToSpeak, sentenceFile, "current")
+        val chunk = buildChunk(4)
+        if (chunk.isEmpty()) return
+        enqueueSynthesis(chapterIndex, sentenceIndex, chunk, sentenceFile, "current")
         enqueueTwoAhead()
         processQueue()
+    }
+
+    private fun buildChunk(size: Int): String {
+        val sentences = mutableListOf<String>()
+        var tempChap = chapterIndex
+        var tempSent = sentenceIndex
+        repeat(size) {
+            val sent = book.chapters.getOrNull(tempChap)?.sentences?.getOrNull(tempSent)
+            if (sent != null) {
+                val processed = if (settings.ignorePunctuation) cleanPunctuation(sent) else sent
+                sentences.add(processed)
+                tempSent++
+                if (tempSent >= (book.chapters.getOrNull(tempChap)?.sentences?.size ?: 0)) {
+                    tempChap++
+                    tempSent = 0
+                }
+            }
+        }
+        return sentences.joinToString(" ")
     }
 
     private fun enqueueSynthesis(chap: Int, sent: Int, text: String, file: File, id: String) {
@@ -238,8 +257,8 @@ class TtsManager(
                 prepare()
                 val durationMs = duration
                 start()
-                if (nextFile.exists() && durationMs > 1000) {
-                    handler.postDelayed({ playNextOverlap() }, (durationMs - 1000).toLong())
+                if (nextFile.exists() && durationMs > 200) {
+                    handler.postDelayed({ playNextOverlap() }, (durationMs - 100).toLong())
                 }
             }
         } catch (e: Exception) {
@@ -278,7 +297,7 @@ class TtsManager(
                     return@postDelayed
                 }
                 enqueueTwoAhead()
-            }, 1000)
+            }, 100)
         } catch (e: Exception) {
             // ignore
         }
@@ -286,10 +305,12 @@ class TtsManager(
 
     private fun onSentenceFinished() {
         if (!wantsToPlay) return
-        if (!advance()) {
-            wantsToPlay = false
-            onPlayingChanged(false)
-            return
+        repeat(3) {
+            if (!advance()) {
+                wantsToPlay = false
+                onPlayingChanged(false)
+                return@onSentenceFinished
+            }
         }
         if (nextFile.exists()) {
             sentenceFile.delete()
