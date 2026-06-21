@@ -9,6 +9,7 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import java.io.File
 import java.util.Locale
+import java.util.concurrent.LinkedBlockingQueue
 import kotlin.math.PI
 
 /**
@@ -39,8 +40,10 @@ class TtsManager(
     private val filteredFile = File(context.cacheDir, "tts_current_filtered.wav")
     private val filteredNextFile = File(context.cacheDir, "tts_next_filtered.wav")
     private var mediaPlayer: MediaPlayer? = null
-    private var nextReady = false
-    private var synthesisingNext = false
+    private var currentlySynthesising = false
+    private val synthQueue = LinkedBlockingQueue<SynthesisJob>()
+
+    private data class SynthesisJob(val chapterIdx: Int, val sentenceIdx: Int, val text: String, val file: File, val utteranceId: String)
 
     init {
         tts = TextToSpeech(context) { status ->
@@ -54,13 +57,11 @@ class TtsManager(
             override fun onError(utteranceId: String?) {}
             override fun onDone(utteranceId: String?) {
                 handler.post {
-                    when (utteranceId) {
-                        "current" -> if (wantsToPlay) playSynthesizedSentence()
-                        "next" -> {
-                            nextReady = true
-                            synthesisingNext = false
-                        }
+                    currentlySynthesising = false
+                    if (utteranceId == "current" && wantsToPlay) {
+                        playSynthesizedSentence()
                     }
+                    processQueue()
                 }
             }
         })
@@ -177,25 +178,35 @@ class TtsManager(
     private fun speakCurrent() {
         val sentence = book.chapters.getOrNull(chapterIndex)?.sentences?.getOrNull(sentenceIndex) ?: return
         val textToSpeak = if (settings.ignorePunctuation) cleanPunctuation(sentence) else sentence
-        nextReady = false
-        synthesisingNext = false
-        tts?.synthesizeToFile(textToSpeak, Bundle(), sentenceFile, "current")
+        synthQueue.clear()
+        enqueueSynthesis(chapterIndex, sentenceIndex, textToSpeak, sentenceFile, "current")
+        enqueueTwoAhead()
+        processQueue()
     }
 
-    private fun synthesizeNext() {
-        if (synthesisingNext || nextReady) return
+    private fun enqueueSynthesis(chap: Int, sent: Int, text: String, file: File, id: String) {
+        synthQueue.offer(SynthesisJob(chap, sent, text, file, id))
+    }
+
+    private fun enqueueTwoAhead() {
         var nextChap = chapterIndex
         var nextSent = sentenceIndex + 1
         if (nextSent >= (book.chapters.getOrNull(nextChap)?.sentences?.size ?: 0)) {
             nextChap++
             nextSent = 0
         }
-        if (nextChap >= book.chapters.size) return
+        if (nextChap < book.chapters.size) {
+            val nextText = book.chapters[nextChap].sentences[nextSent]
+            val textToSpeak = if (settings.ignorePunctuation) cleanPunctuation(nextText) else nextText
+            enqueueSynthesis(nextChap, nextSent, textToSpeak, nextFile, "next")
+        }
+    }
 
-        val nextSentence = book.chapters[nextChap].sentences[nextSent]
-        val textToSpeak = if (settings.ignorePunctuation) cleanPunctuation(nextSentence) else nextSentence
-        synthesisingNext = true
-        tts?.synthesizeToFile(textToSpeak, Bundle(), nextFile, "next")
+    private fun processQueue() {
+        if (currentlySynthesising || synthQueue.isEmpty()) return
+        val job = synthQueue.poll() ?: return
+        currentlySynthesising = true
+        tts?.synthesizeToFile(job.text, Bundle(), job.file, job.utteranceId)
     }
 
     private fun cleanPunctuation(text: String): String =
@@ -227,7 +238,6 @@ class TtsManager(
                 prepare()
                 start()
             }
-            synthesizeNext()
         } catch (e: Exception) {
             onSentenceFinished()
         }
@@ -240,39 +250,13 @@ class TtsManager(
             onPlayingChanged(false)
             return
         }
-        if (nextReady && nextFile.exists()) {
-            nextReady = false
-            playNextFile()
+        if (nextFile.exists()) {
+            sentenceFile.delete()
+            nextFile.renameTo(sentenceFile)
+            enqueueTwoAhead()
+            playSynthesizedSentence()
         } else {
             speakCurrent()
-        }
-    }
-
-    private fun playNextFile() {
-        if (!wantsToPlay) return
-        stopPlayer()
-        sentenceFile.delete()
-        nextFile.renameTo(sentenceFile)
-        val playable = if (settings.eqCutBass) {
-            try {
-                applyBassCutFilter(sentenceFile, filteredFile, BASS_CUTOFF_HZ)
-                filteredFile
-            } catch (e: Exception) {
-                sentenceFile
-            }
-        } else {
-            sentenceFile
-        }
-        try {
-            mediaPlayer = MediaPlayer().apply {
-                setDataSource(playable.absolutePath)
-                setOnCompletionListener { onSentenceFinished() }
-                prepare()
-                start()
-            }
-            synthesizeNext()
-        } catch (e: Exception) {
-            onSentenceFinished()
         }
     }
 
